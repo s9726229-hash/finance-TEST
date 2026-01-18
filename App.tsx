@@ -11,54 +11,9 @@ import { Investments } from './views/Investments';
 import { Budget } from './views/Budget'; // Import new view
 import { ViewState, Asset, Transaction, RecurringItem, AssetType, StockSnapshot, Currency, BudgetConfig } from './types';
 import * as storage from './services/storage';
+import { calculateLoanBalance } from './services/finance'; // Centralized function
 import { CheckCircle2, X } from 'lucide-react';
 import { VoiceInputFab } from './components/VoiceInputFab'; // New Import
-
-// Helper: Calculate Remaining Loan Balance (Amortization)
-const calculateLoanBalance = (asset: Asset): number => {
-    if (asset.type !== AssetType.DEBT || !asset.startDate || !asset.originalAmount) {
-        return asset.amount;
-    }
-
-    const principal = asset.originalAmount;
-    const annualRate = asset.interestRate || 2; // Default 2%
-    const totalYears = asset.termYears || 20;
-    const graceYears = asset.interestOnlyPeriod || 0;
-    
-    const now = new Date();
-    const start = new Date(asset.startDate);
-    
-    // Calculate months passed
-    const monthsPassed = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
-
-    if (monthsPassed < 0) return principal; // Future loan
-
-    const graceMonths = graceYears * 12;
-
-    // Phase 1: Grace Period (Interest Only) - Principal doesn't drop
-    if (monthsPassed <= graceMonths) {
-        return principal;
-    }
-
-    // Phase 2: Repayment (Amortization)
-    
-    const monthlyRate = (annualRate / 100) / 12;
-    const totalAmortizationMonths = (totalYears * 12) - graceMonths;
-    const paymentsMade = monthsPassed - graceMonths;
-
-    if (paymentsMade >= totalAmortizationMonths) return 0; // Paid off
-    if (monthlyRate === 0) {
-        // Simple linear reduction if interest is 0 (rare but possible)
-        return principal * (1 - (paymentsMade / totalAmortizationMonths));
-    }
-
-    const factorN = Math.pow(1 + monthlyRate, totalAmortizationMonths);
-    const factorP = Math.pow(1 + monthlyRate, paymentsMade);
-
-    const remaining = principal * (factorN - factorP) / (factorN - 1);
-    
-    return Math.round(remaining);
-};
 
 export default function App() {
   const [view, setView] = useState<ViewState>('DASHBOARD');
@@ -98,7 +53,8 @@ export default function App() {
     const newAssets = assets.map(asset => {
         if (asset.type === AssetType.DEBT && asset.startDate && asset.originalAmount) {
             const calculatedBalance = calculateLoanBalance(asset);
-            if (Math.abs(calculatedBalance - asset.amount) > 10) {
+            // Check if update is significant to avoid unnecessary re-renders
+            if (Math.abs(calculatedBalance - asset.amount) > 1) { // Loosened to 1 for small monthly changes
                 updatedCount++;
                 return { ...asset, amount: calculatedBalance, lastUpdated: Date.now() };
             }
@@ -112,8 +68,9 @@ export default function App() {
         setToast({ message: `已自動更新 ${updatedCount} 筆貸款的本月剩餘本金`, count: updatedCount });
         setTimeout(() => setToast(null), 5000);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assets.length]); 
+  // BUG FIX: Changed dependency from [assets.length] to [assets]
+  // This ensures updates trigger on asset EDIT, not just add/delete.
+  }, [assets]); 
 
   // --- Auto-Execute Logic (Check on Load & Data Change) ---
   useEffect(() => {
@@ -253,33 +210,6 @@ export default function App() {
     storage.saveAssets(updated);
   };
 
-  const handleUpdateStockAssetValue = (newTotalValue: number) => {
-      const stockAsset = assets.find(a => a.type === AssetType.STOCK);
-      if (stockAsset) {
-          const updatedAsset: Asset = {
-              ...stockAsset,
-              amount: newTotalValue,
-              lastUpdated: Date.now()
-          };
-          updateAsset(updatedAsset);
-          setToast({ message: `已自動同步資產：「${stockAsset.name}」價值更新為 $${newTotalValue.toLocaleString()}`, count: 1 });
-      } else {
-          const newAsset: Asset = {
-              id: crypto.randomUUID(),
-              name: "股票投資帳戶 (Auto)",
-              type: AssetType.STOCK,
-              amount: newTotalValue,
-              originalAmount: newTotalValue,
-              currency: Currency.TWD,
-              exchangeRate: 1,
-              lastUpdated: Date.now()
-          };
-          addAsset(newAsset);
-          setToast({ message: `已自動建立資產：「股票投資帳戶」並更新價值`, count: 1 });
-      }
-      setTimeout(() => setToast(null), 4000);
-  };
-
   // Transaction Handlers
   const addTransaction = (t: Transaction) => {
     // Get latest to avoid race condition if possible (though state is fast enough here)
@@ -289,14 +219,6 @@ export default function App() {
     storage.saveTransactions(updated);
     setToast({ message: `記帳成功！${t.item} $${t.amount}`, count: 1 });
     setTimeout(() => setToast(null), 3000);
-  };
-
-  const bulkAddTransactions = (ts: Transaction[]) => {
-    const updated = [...transactions, ...ts];
-    setTransactions(updated);
-    storage.saveTransactions(updated);
-    setToast({ message: `已成功匯入 ${ts.length} 筆交易紀錄`, count: ts.length });
-    setTimeout(() => setToast(null), 4000);
   };
 
   const deleteTransaction = (id: string) => {
@@ -313,19 +235,25 @@ export default function App() {
   };
 
   const executeRecurring = (item: RecurringItem, date: string) => {
+    const newTransaction: Transaction = {
+      id: crypto.randomUUID(),
+      date: date,
+      amount: item.amount,
+      category: item.category,
+      item: `[手動] ${item.name}`,
+      type: item.type,
+      note: '系統手動入帳 (Manual Execution)',
+      source: 'MANUAL',
+    };
+    addTransaction(newTransaction);
+    setToast({ message: `已手動執行固定項目: ${item.name}`, count: 1 });
+    setTimeout(() => setToast(null), 3000);
   };
 
   const deleteRecurring = (id: string) => {
     const updated = recurring.filter(r => r.id !== id);
     setRecurring(updated);
     storage.saveRecurring(updated);
-  };
-
-  // Investment Handlers
-  const addStockSnapshot = (snapshot: StockSnapshot) => {
-      const updated = [...stockSnapshots, snapshot];
-      setStockSnapshots(updated);
-      storage.saveStockSnapshots(updated);
   };
 
   // Budget Handlers
@@ -340,10 +268,10 @@ export default function App() {
     <Layout currentView={view} onChangeView={setView}>
       {view === 'DASHBOARD' && <Dashboard assets={assets} transactions={transactions} stockSnapshots={stockSnapshots} recurring={recurring} />}
       {view === 'ASSETS' && <Assets assets={assets} onAdd={addAsset} onUpdate={updateAsset} onDelete={deleteAsset} />}
-      {view === 'TRANSACTIONS' && <Transactions transactions={transactions} onAdd={addTransaction} onDelete={deleteTransaction} onBulkAdd={bulkAddTransactions} />}
+      {view === 'TRANSACTIONS' && <Transactions transactions={transactions} onAdd={addTransaction} onDelete={deleteTransaction} />}
       {view === 'BUDGET' && <Budget transactions={transactions} budgets={budgets} onUpdateBudgets={updateBudgets} />}
       {view === 'RECURRING' && <Recurring items={recurring} executedLog={recurringExecuted} onAdd={addRecurring} onExecute={executeRecurring} onDelete={deleteRecurring} />}
-      {view === 'INVESTMENTS' && <Investments snapshots={stockSnapshots} onAddSnapshot={addStockSnapshot} onUpdateAssetValue={handleUpdateStockAssetValue} onBulkAddTransactions={bulkAddTransactions} />}
+      {view === 'INVESTMENTS' && <Investments snapshots={stockSnapshots} />}
       {view === 'HISTORY' && <HistoryView />}
       {view === 'SETTINGS' && <Settings onDataChange={refreshData} />}
 

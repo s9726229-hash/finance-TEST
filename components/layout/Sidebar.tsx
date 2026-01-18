@@ -2,7 +2,7 @@
 import React from 'react';
 import { ViewState } from '../../types';
 import { 
-  LayoutDashboard, Settings, Code2, LayoutGrid, PieChart, 
+  LayoutDashboard, Settings, Bot, LayoutGrid, PieChart, 
   ScrollText, CalendarClock, TrendingUp, Target
 } from 'lucide-react';
 
@@ -43,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView }) =
           <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
             FinTrack AI
           </h1>
-          <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">V5.2</span>
+          <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">V5.3</span>
         </div>
       </div>
 
@@ -55,7 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView }) =
         <NavItem view="RECURRING" current={currentView} icon={CalendarClock} label="固定收支" onClick={onChangeView} />
         <NavItem view="INVESTMENTS" current={currentView} icon={TrendingUp} label="股票投資" onClick={onChangeView} />
         <div className="pt-4 mt-4 border-t border-slate-800">
-          <NavItem view="HISTORY" current={currentView} icon={Code2} label="系統日誌" onClick={onChangeView} />
+          <NavItem view="HISTORY" current={currentView} icon={Bot} label="AI 調校日誌" onClick={onChangeView} />
         </div>
       </nav>
 
